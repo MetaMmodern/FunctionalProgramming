@@ -83,15 +83,6 @@
       (allKeysChecker (rest allkeys) row)
       (allKeysChecker (rest allkeys) (conj {(first allkeys) ""} row)))))
 
-(defn oneRowJoiner [col1, col2, t2, row]
-  (merge row (first (filter (fn [x]
-                              (= ((keyword col2) x) ((keyword col1) row))) t2))))
-
-;; (defn Joiner [t1, t2, col1, col2]
-
-;;   (def joinedTables (into [] (map (partial oneRowJoiner col1 col2 t2) t1)))
-;;   (into [] (map (partial allKeysChecker allkeys) joinedTables)))
-
 (defn getJoiningRightTable [query]
   (get query (+ (.indexOf query "join") 1)))
 
