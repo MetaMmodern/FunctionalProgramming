@@ -24,7 +24,6 @@
   (into [] (apply data->maps (saveSeq name format))))
 
 (defn printTable [table]
-
   (loop [k 0]
     (when (< k (count (first table)))
       (print (format "|%-40s| " (name (first (keys (nth (first table) k))))))
@@ -44,11 +43,11 @@
   (if (empty? str) false (every? #(Character/isDigit %) str)))
 
 (defn OneRowToInts [row]
-  (def thisVals (vals row))
-  (def thisKeys (keys row))
-  (zipmap thisKeys (mapv #(if (OneCellToInt %)
-                            (Integer/parseInt %)
-                            %) thisVals)))
+  (let [thisVals (vals row)
+        thisKeys (keys row)]
+    (zipmap thisKeys (mapv #(if (OneCellToInt %)
+                              (Integer/parseInt %)
+                              %) thisVals))))
 
 (defn TabletoInt [table]
   (mapv OneRowToInts table))
@@ -73,8 +72,8 @@
 
 
 (defn rightJoin [ds1 ds2 col1 col2]
-  (def out (outterJoin ds1 ds2 col1 col2))
-  (into [] (filterv #(some (partial = (first (vals %))) (map col2 ds2)) out)))
+  (let [out (outterJoin ds1 ds2 col1 col2)]
+    (into [] (filterv #(some (partial = (first (vals %))) (map col2 ds2)) out))))
 
 (defn allKeysChecker [allkeys, row]
   (if (empty? allkeys)
@@ -83,25 +82,34 @@
       (allKeysChecker (rest allkeys) row)
       (allKeysChecker (rest allkeys) (conj {(first allkeys) ""} row)))))
 
+(defn oneRowJoiner [col1, col2, t2, row]
+  (merge row (first (filter (fn [x]
+                              (= ((keyword col2) x) ((keyword col1) row))) t2))))
+
 (defn getJoiningRightTable [query]
   (get query (+ (.indexOf query "join") 1)))
 
 (defn ColumnsForJoin [query]
-  (def left (nth (str/split (get query (+ (.indexOf query "on") 1)) #"\.") 1))
-  (def right (nth (str/split (get query (+ (.indexOf query "on") 3)) #"\.") 1))
-  {:left (keyword left) :right (keyword right)})
+  (let [left (nth (str/split (get query (+ (.indexOf query "on") 1)) #"\.") 1)
+        right (nth (str/split (get query (+ (.indexOf query "on") 3)) #"\.") 1)]
+    {:left (keyword left) :right (keyword right)}))
 
 (defn getJoinedTable [TableOne, sql, query]
-  (def joinType (get query (- (.indexOf query "join") 1)))
-  (def clearTableOne (wholeTableNonEmpty TableOne))
-  (def TableTwo  (TabletoInt (makeTable (get sql  :joinedTable) (str (nth (str/split (get sql :joinedTable) #"\.") 1)))))
-  (def allkeys (distinct (concat (keys (first TableOne)) (keys (first TableTwo)))))
-  (def clearTableTwo (wholeTableNonEmpty TableTwo))
-  (case joinType
-    "outter" (into [] (map (partial allKeysChecker allkeys) (outterJoin clearTableOne clearTableTwo (get (get sql :valsJoin) :left) (get (get sql :valsJoin) :right))))
+  (let [joinType (get query (- (.indexOf query "join") 1))
+        clearTableOne (wholeTableNonEmpty TableOne)
+        TableTwo  (TabletoInt (makeTable (get sql  :joinedTable) (str (nth (str/split (get sql :joinedTable) #"\.") 1))))
+        allkeys (distinct (concat (keys (first TableOne)) (keys (first TableTwo))))
+        clearTableTwo (wholeTableNonEmpty TableTwo)]
+    (case joinType
+      "outter" (into [] (map (partial allKeysChecker allkeys) (outterJoin clearTableOne clearTableTwo (get (get sql :valsJoin) :left) (get (get sql :valsJoin) :right))))
+      "inner" (into [] (map (partial allKeysChecker allkeys) (innerJoin clearTableOne clearTableTwo (get (get sql :valsJoin) :left) (get (get sql :valsJoin) :right))))
+      "right" (into [] (map (partial allKeysChecker allkeys) (rightJoin clearTableOne clearTableTwo (get (get sql :valsJoin) :left) (get (get sql :valsJoin) :right)))))))
 
-    "inner" (into [] (map (partial allKeysChecker allkeys) (innerJoin clearTableOne clearTableTwo (get (get sql :valsJoin) :left) (get (get sql :valsJoin) :right))))
-    "right" (into [] (map (partial allKeysChecker allkeys) (rightJoin clearTableOne clearTableTwo (get (get sql :valsJoin) :left) (get (get sql :valsJoin) :right))))))
+;; (defn getOneLittleTable [table, colname, colvalue]
+;;   (into [] (filter (fn [x] (= (colname x) colvalue)) table)))
+
+
+
 
 ;; FORMULAS
 (defn average
@@ -111,18 +119,17 @@
     (double (/ (reduce + numbers) (count numbers)))))
 
 (defn HigherOrderFun [fun, col, table]
-  (def allNums (mapv (fn [row] (get row (keyword col))) table))
-  [[{(keyword col) (fun allNums)}]])
+  (let [allNums (mapv (fn [row] (get row (keyword col))) table)]
+    [[{(keyword col) (fun allNums)}]]))
 
 
 ;; ORDER PARSER
 (defn OrderMaker [table, cols, direction]
-  (def colnames (str/split (str/join "" cols) #","))
-  (def colkeys   (mapv keyword colnames))
-
-  (if (= direction "asc")
-    (sort-by (apply juxt colkeys) table)
-    (into [] (reverse (sort-by (apply juxt colkeys) table)))))
+  (let [colnames (str/split (str/join "" cols) #",")
+        colkeys   (mapv keyword colnames)]
+    (if (= direction "asc")
+      (sort-by (apply juxt colkeys) table)
+      (into [] (reverse (sort-by (apply juxt colkeys) table))))))
 
 (defn OrderParser [table, query]
   (def OrderIndex  (.indexOf query "order"))
@@ -182,22 +189,23 @@
         (= Sign ">") (filterv (fn [row] (> (get row ColumnName) (Integer/parseInt Value))) table)))))
 
 (defn whereExpressionParser [table, query, sqlParams]
-  (def whereIndex (.indexOf query "where"))
-  (def whereClause (subvec query (+ 1 whereIndex)))
-  (def normalWhere (if (contains? sqlParams :hasOrder)
-                     (subvec whereClause 0 (.indexOf whereClause "order"))
-                     whereClause))
-  (def secondNormal (if (contains? sqlParams :hasGroup)
-                      (subvec whereClause 0 (.indexOf normalWhere "group"))
-                      normalWhere))
-  (def expressionsAndConnects (recursiveWheresParser secondNormal, [], [], []))
-  (def allDFs (mapv (partial oneExpressionParser table) (first expressionsAndConnects)))
-  (def firstwhereDF (if (= (count allDFs) 1)
-                      (nth allDFs 0)
-                      (twoDFintoOne (nth allDFs 0), (nth allDFs 1), (first (nth expressionsAndConnects 1)))))
-  (if (= (count allDFs) 1)
-    firstwhereDF
-    (recursiveDFs (subvec allDFs 2), (subvec (nth expressionsAndConnects 1) 1), firstwhereDF)))
+  (let [whereIndex (.indexOf query "where")
+        whereClause (subvec query (+ 1 whereIndex))
+        normalWhere (if (contains? sqlParams :hasOrder)
+                      (subvec whereClause 0 (.indexOf whereClause "order"))
+                      whereClause)
+        secondNormal (if (contains? sqlParams :hasGroup)
+                       (subvec whereClause 0 (.indexOf normalWhere "group"))
+                       normalWhere)
+        expressionsAndConnects (recursiveWheresParser secondNormal, [], [], [])
+        allDFs (mapv (partial oneExpressionParser table) (first expressionsAndConnects))
+        firstwhereDF (if (= (count allDFs) 1)
+                       (nth allDFs 0)
+                       (twoDFintoOne (nth allDFs 0), (nth allDFs 1), (first (nth expressionsAndConnects 1))))]
+    (if (= (count allDFs) 1)
+      firstwhereDF
+      (recursiveDFs (subvec allDFs 2), (subvec (nth expressionsAndConnects 1) 1), firstwhereDF))))
+
 
 
 
@@ -235,8 +243,10 @@
     (apply list (str/split
                  (str/join ""
                            (subvec query 1
+                                   (if (some? (some (partial = "case") query))
+                                     (.indexOf query "case")
+                                     (.indexOf query "from")))) #",")))
 
-                                   (.indexOf query "from"))) #",")))
   (if (not= count (str/join "" columns) 0)
     columns
     (throw (.Trowable "some kind of error about columns"))))
@@ -245,6 +255,85 @@
 
 (defn getTableIndex [query]
   (+ (.indexOf query "from") 1));
+
+
+;; GroupBlock
+
+(defn getGroupByTable [table, sqlParams, queryVector]
+  (let [grouper (keyword (:hasGroup sqlParams))
+        allCols (simpleColsParser queryVector)
+        colname (last (re-find #"\(([^)]+)\)" (first (filter (fn [x] (clojure.string/includes? x "(")) allCols))))
+        formula (re-find #"^[^\(]+" (first (filter (fn [x] (clojure.string/includes? x "(")) allCols)))]
+    (case formula
+      "min" (map
+             (fn [[grp-map values]]
+               (assoc grp-map
+                      (keyword (str formula colname)) (apply min (map (keyword colname) values)))) (group-by #(select-keys % [grouper]) table))
+      "count" (map
+               (fn [[grp-map values]]
+                 (assoc grp-map
+                        (keyword (str formula colname)) (count (map (keyword colname) values)))) (group-by #(select-keys % [grouper]) table)))))
+
+(defn HavingDFGetter [table, sqlParams, queryVector]
+  (let [havingIndex (.indexOf queryVector "having")
+        havingClause (subvec queryVector (+ 1 havingIndex))
+        normalHaving (if (contains? sqlParams :hasOrder)
+                       (subvec havingClause 0 (.indexOf havingClause "order"))
+                       havingClause)
+
+        colName (str (re-find #"^[^\(]+" (nth normalHaving 0)) (last (re-find #"\(([^)]+)\)" (nth normalHaving 0))))
+        sign (nth normalHaving 1)
+        comparablePart (Integer/parseInt (nth normalHaving 2))]
+    (doall (filter #((resolve (symbol sign)) (get % (keyword colName)) comparablePart) table))))
+
+(defn TableCaseNonEmpty [table keyName]
+  (mapv #(assoc % keyName "") table))
+
+(defn CheckOneRowOneExpression [row, expr]
+  (let [colname (keyword (nth expr 0))
+        sign (nth expr 1)
+        comparablePart (nth expr 2)
+        trueComparablePart (if (every? #(Character/isDigit %) comparablePart)
+                             (Integer/parseInt comparablePart)
+                             comparablePart)]
+    ((resolve (symbol sign)) (colname row) trueComparablePart)))
+
+
+(defn TableCaseModifier [table keyName AllParams elseCase]
+  (if (empty? (nth AllParams 0))
+    (into [] (map #(if (= (keyName %) "")
+                     (assoc % keyName elseCase)
+                     (assoc % keyName (keyName %))) table))
+    (TableCaseModifier (map #(if (CheckOneRowOneExpression % (first (nth AllParams 0)))
+                               (assoc % keyName (first (nth AllParams 1)))
+                               (assoc % keyName (keyName %))) table) keyName [(rest (nth AllParams 0)), (rest (nth AllParams 1))] elseCase)))
+
+
+(defn WheresConditionsParser [wholeThing, wheres, conditions]
+  (if (empty? wholeThing)
+    [wheres, conditions]
+    (if (= "when" (first wholeThing))
+      (WheresConditionsParser (subvec wholeThing 4), (cons (subvec wholeThing 1 4) wheres), conditions) ;;when case
+      (if (=  (.indexOf wholeThing "when") -1) ;;then case
+        (WheresConditionsParser [], wheres, (cons (clojure.string/join " " (subvec wholeThing 1)) conditions))
+        (WheresConditionsParser (subvec wholeThing (.indexOf wholeThing "when")), wheres, (cons (clojure.string/join " " (subvec wholeThing 1 (.indexOf wholeThing "when"))) conditions)))) ;;then case
+    ))
+
+(defn CaseParser [table sqlParams queryVector]
+  (def WholeCase (subvec queryVector (.indexOf queryVector "case") (.indexOf queryVector "from")))
+  (def CaseEnd (subvec WholeCase 0 (.indexOf WholeCase "as")))
+  (def AsName (keyword (first (subvec WholeCase (+ 1 (.indexOf WholeCase "as"))))))
+  (def WhenWhenElse (subvec CaseEnd
+                            (+ 1 (.indexOf CaseEnd "case"))
+                            (.indexOf CaseEnd "end")))
+  (def ElseClause (clojure.string/join " " (subvec WhenWhenElse (+ 1 (.indexOf WhenWhenElse "else")))))
+  (def Whens (subvec WhenWhenElse 1 (.indexOf WhenWhenElse "else")))
+  (def allParams (WheresConditionsParser (subvec Whens 3) [(subvec Whens 0 3)] []))
+  ;;working with table now
+  (def TableWithNewCol (TableCaseNonEmpty table AsName))
+  (TableCaseModifier TableWithNewCol AsName allParams ElseClause))
+
+
 
 (defn parseRequest [query]
   (cond
@@ -257,19 +346,25 @@
                                                       (parseRequest (into [] (concat ["nextexps"] (subvec query 1)))))
     (some? (some (partial = "nextexps") query)) (conj {:expressions (simpleColsParser query)}
                                                       (parseRequest (subvec query 1)))
+    (some? (some (partial = "case") query)) (conj {:hasCase true}
+                                                  (parseRequest (into [] (concat (subvec query 0 (.indexOf query "case"))
+                                                                                 (subvec query (+ (.indexOf query "case") 1))))))
     (some? (some (partial = "from") query)) (conj {:tableName (get query (getTableIndex query))}
                                                   (parseRequest (into [] (concat (subvec query 0 (- (getTableIndex query) 2))
                                                                                  (subvec query (getTableIndex query))))))
     (some? (some (partial = "where") query)) (conj {:hasWhere true}
                                                    (parseRequest (into [] (concat (subvec query 0 (.indexOf query "where"))
                                                                                   (subvec query (+ (.indexOf query "where") 1))))))
-    ;;                                                                            
-    ;; (some? (some (partial = "case") query)) (conj {:hasCase true}
-    ;;                                               (parseRequest (into [] (concat (subvec query 0 (.indexOf query "case"))
-    ;;                                                                              (subvec query (+ (.indexOf query "case") 1))))))
-    (some? (some (partial = "group") query)) (conj {:hasGroup true}
+    ;;        
+    ;;        
+    ;;
+    ;;                                                                         
+    (some? (some (partial = "group") query)) (conj {:hasGroup (nth query (+ (.indexOf query "group") 2))}
                                                    (parseRequest (into [] (concat (subvec query 0 (.indexOf query "group"))
                                                                                   (subvec query (+ (.indexOf query "group") 1))))))
+    (some? (some (partial = "having") query)) (conj {:hasHaving true}
+                                                    (parseRequest (into [] (concat (subvec query 0 (.indexOf query "having"))
+                                                                                   (subvec query (+ (.indexOf query "having") 1))))))
     (some? (some (partial = "order") query)) (conj {:hasOrder true}
                                                    (parseRequest (into [] (concat (subvec query 0 (.indexOf query "order"))
                                                                                   (subvec query (+ (.indexOf query "order") 1))))))
@@ -285,36 +380,66 @@
     (some? (some (partial = "join") query)) (conj {:hasJoin true :joinedTable (getJoiningRightTable query) :valsJoin (ColumnsForJoin  query)}
                                                   (parseRequest (into [] (concat (subvec query 0 (+ (getTableIndex query) 1))
                                                                                  (subvec query (+ (getTableIndex query) 3))))))
+
     ;; (some? (some (partial = "order") query)) ()
     :else {}))
 
+;; '() 
+;; []
+;; {}
 
 (defn ParseSQL [inputString]
-  (def queryArray (str/split inputString #" "))
-  (def sql (parseRequest queryArray))
-  (def tableDF  (if (and (contains? sql :isSelect)
-                         (contains? sql :tableName))
-                  (makeTable (get sql :tableName) (str (nth (str/split (get sql :tableName) #"\.") 1)))
-                  (throw (Throwable. "No select or table name"))))
-  (def IntStrDF (TabletoInt tableDF))
-  (def JoinsDF (if (contains? sql :hasJoin)
-                 (getJoinedTable IntStrDF sql queryArray)
-                 IntStrDF))
-  (def whereDF (if (contains? sql :hasWhere)
-                 (whereExpressionParser JoinsDF queryArray sql)
-                 JoinsDF))
+  (let [queryArray (str/split inputString #" ")
 
-  (def OrderedDF (if (contains? sql :hasOrder)
-                   (OrderParser whereDF, queryArray)
-                   whereDF))
+        sql (parseRequest queryArray)
 
-  (def ExprDF (if (contains? sql :hasFormula)
-                (FormulaParser (into [] (get sql :expressions)) OrderedDF)
-                (newSimpleExpressions (get sql :expressions) OrderedDF)))
-  (def distinctDF (if (contains? sql :isDistinct)
-                    (distinctSelect ExprDF)
-                    ExprDF))
-  (printTable distinctDF))
+        tableDF  (if (and (contains? sql :isSelect)
+                          (contains? sql :tableName))
+                   (makeTable (get sql :tableName) (str (nth (str/split (get sql :tableName) #"\.") 1)))
+                   (throw (Throwable. "No select or table name")))
+
+        IntStrDF (TabletoInt tableDF)
+
+        JoinsDF (if (contains? sql :hasJoin)
+                  (getJoinedTable IntStrDF sql queryArray)
+                  IntStrDF)
+
+        whereDF (if (contains? sql :hasWhere)
+                  (whereExpressionParser JoinsDF queryArray sql)
+                  JoinsDF)
+
+        GroupedDF (if (contains? sql :hasGroup)
+                    (into [] (getGroupByTable whereDF sql queryArray))
+                    whereDF)]
+    (if (contains? sql :hasGroup)
+      (do
+        (def HavingDF (if (contains? sql :hasHaving)
+                        (HavingDFGetter GroupedDF sql queryArray)
+                        GroupedDF))
+        (def OrderedDF (if (contains? sql :hasOrder)
+                         (OrderParser HavingDF, queryArray)
+                         HavingDF))
+
+        (def ExprDF (newSimpleExpressions (into [] (keys (first OrderedDF))) OrderedDF))
+        (def distinctDF (if (contains? sql :isDistinct)
+                          (distinctSelect ExprDF)
+                          ExprDF))
+        (printTable distinctDF))
+      (do
+        (def OrderedDF (if (contains? sql :hasOrder)
+                         (OrderParser GroupedDF, queryArray)
+                         GroupedDF))
+        (def CaseDF (if (contains? sql :hasCase)
+                      (CaseParser OrderedDF sql queryArray)
+                      OrderedDF))
+        (def ExprDF (if (contains? sql :hasFormula)
+                      (FormulaParser (into [] (get sql :expressions)) CaseDF)
+                      (newSimpleExpressions (get sql :expressions) CaseDF)))
+
+        (def distinctDF (if (contains? sql :isDistinct)
+                          (distinctSelect ExprDF)
+                          ExprDF))
+        (printTable distinctDF)))))
 
 
 
